@@ -19,7 +19,6 @@ import {
   Button,
   Chip,
 } from '@nextui-org/react';
-import { useCITEDValidator } from '../contexts/CITEDValidatorContext';
 
 /** -----------------------------
  * Navigation Context & Hook
@@ -153,6 +152,7 @@ NavigationButtonContent.propTypes = {
  *   isLoading?:(ctx:any)=>boolean,
  *   subItems?:Array<{id:string,title:string,description?:string}>
  * }>} props.steps
+ * @param {Object} props.context - External context values for validation and state
  * @param {(stepId:string)=>void} [props.onStepChange]
  * @param {(stepId:string, subId:string)=>void} [props.onSubItemSelect]
  * @param {(updates:any)=>void} [props.onContextUpdate]
@@ -163,6 +163,7 @@ NavigationButtonContent.propTypes = {
  */
 export function WorkflowStepper({
   steps = [],
+  context = {},
   onStepChange,
   onSubItemSelect,
   onContextUpdate,
@@ -171,7 +172,6 @@ export function WorkflowStepper({
   showErrorFeedback = true,
   testIdPrefix = 'workflow-stepper',
 }) {
-  const context = useCITEDValidator();
 
   // Guard: no steps configured
   const firstId = steps?.[0]?.id ?? null;
@@ -606,6 +606,7 @@ WorkflowStepper.propTypes = {
       ),
     })
   ),
+  context: PropTypes.object,
   onStepChange: PropTypes.func,
   onSubItemSelect: PropTypes.func,
   onContextUpdate: PropTypes.func,
