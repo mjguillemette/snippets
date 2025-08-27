@@ -43,13 +43,18 @@ const useWizard = (config = {}) => {
     }
   }, [currentStep, steps, onStepChange]);
 
-  // Advances to the next step.
-  const next = useCallback(() => {
+  // Advances to the next step, validates if available
+  const next = useCallback((validator) => {
+    if (validator && !validator()) {
+      return false; // Don't advance if validation fails
+    }
     if (currentStep < steps) {
       setCurrentStep(prev => prev + 1);
       onStepChange(currentStep + 1);
+      return true;
     }
-  }, [currentStep, steps, onStepChange]);
+    return false;
+  }, [currentStep, steps, onStepChange])
 
   // Goes back to the previous step.
   const previous = useCallback(() => {
@@ -233,7 +238,13 @@ const MultiStepModal = ({
               {/* Conditional button for "Complete" or "Continue" */}
               {wizard.isLastStep ? (
                 <button 
-                  onClick={wizard.submit}
+                  onClick={() => {
+                    const validator = wizard.stepValidators?.[wizard.currentStep];
+                    if (validator && !validator()) {
+                      return; // Don't submit if validation fails
+                    }
+                    wizard.submit();
+                  }}
                   disabled={wizard.isLoading}
                   className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
@@ -247,7 +258,10 @@ const MultiStepModal = ({
                 </button>
               ) : (
                 <button 
-                  onClick={wizard.next}
+                  onClick={() => {
+                    const validator = wizard.stepValidators?.[wizard.currentStep];
+                    wizard.next(validator);
+                  }}
                   disabled={wizard.isLoading}
                   className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
                 >
@@ -365,17 +379,63 @@ export default function App() {
 
   // A simple validation function for the first step.
   const validateStep1 = () => {
-    // Check if the name field is empty.
-    if (!wizard.formData.name?.trim()) {
+    let hasErrors = false;
+    
+    // Name validation
+    const name = wizard.formData.name?.trim();
+    if (!name) {
       wizard.setFieldError('name', 'Name is required');
-      return false;
+      hasErrors = true;
+    } else if (name.length < 2) {
+      wizard.setFieldError('name', 'Name must be at least 2 characters');
+      hasErrors = true;
+    } else if (name.length > 100) {
+      wizard.setFieldError('name', 'Name must be less than 100 characters');
+      hasErrors = true;
+    } else if (!/^[a-zA-Z0-9\s\-_.()]+$/.test(name)) {
+      wizard.setFieldError('name', 'Name contains invalid characters');
+      hasErrors = true;
     }
-    // Check if the name is long enough.
-    if (wizard.formData.name.length < 3) {
-      wizard.setFieldError('name', 'Name must be at least 3 characters');
-      return false;
+    
+    // Description validation
+    const description = wizard.formData.description?.trim();
+    if (description && description.length > 500) {
+      wizard.setFieldError('description', 'Description must be less than 500 characters');
+      hasErrors = true;
     }
-    return true;
+    
+    // Tags validation
+    const tags = wizard.formData.tags || [];
+    if (tags.length > 10) {
+      wizard.setFieldError('tags', 'Maximum of 10 tags allowed');
+      hasErrors = true;
+    } else {
+      for (const tag of tags) {
+        if (tag.trim().length === 0) {
+          wizard.setFieldError('tags', 'Empty tags are not allowed');
+          hasErrors = true;
+          break;
+        }
+        if (tag.length > 30) {
+          wizard.setFieldError('tags', 'Tags must be less than 30 characters');
+          hasErrors = true;
+          break;
+        }
+        if (!/^[a-zA-Z0-9\-_.#]+$/.test(tag)) {
+          wizard.setFieldError('tags', 'Tags can only contain letters, numbers, and special characters (no spaces)');
+          hasErrors = true;
+          break;
+        }
+      }
+    }
+    
+    return !hasErrors;
+  };
+
+  wizard.stepValidators = {
+    1: validateStep1,
+    2: () => true,
+    3: () => true
   };
 
   return (
@@ -544,6 +604,9 @@ export default function App() {
                       tags={wizard.formData.tags || []}
                       onTagsChange={(tags) => wizard.updateField('tags', tags)}
                     />
+                    {wizard.errors.tags && (
+                      <p className="text-red-500 text-sm mt-1">{wizard.errors.tags}</p>
+                    )}
                   </div>
                   
                   <div>
@@ -647,97 +710,3 @@ export default function App() {
     </div>
   );
 }
-
-/**
- * useWizard - A custom React hook for managing the state and logic of a multi-step wizard.
- * Encapsulates all the core functionality, making UI components more reusable and presentational.
- * 
- * @param {Object} [config={}] - Configuration object for the wizard
- * @param {number} [config.steps=3] - Total number of steps in the wizard
- * @param {Function} [config.onComplete] - Async function called when wizard is completed, receives formData
- * @param {Function} [config.onStepChange] - Function called when step changes, receives new step number
- * @param {Object} [config.initialData={}] - Initial data object for the form
- * 
- * @returns {Object} Wizard state and actions object (see wizardPropType for full interface)
- */
-
-/**
- * MultiStepModal - A reusable UI component for a multi-step modal wizard.
- * Receives all its logic from the useWizard hook via props.
- * 
- * @param {Object} wizard - The wizard object from useWizard hook (see wizardPropType)
- * @param {string} [title="Create New Item"] - Title displayed in modal header
- * @param {React.Node|Function} children - Content to render, can be JSX or render function
- */
-
-/**
- * TagInput - A simple component for managing tags input with add/remove functionality.
- * 
- * @param {string[]} tags - Array of current tag strings
- * @param {Function} onTagsChange - Callback function called when tags array changes
- */
-
-/**
- * GroupCreationModal - A specialized modal for creating groups, built on top of MultiStepModal.
- * 
- * @param {Object} wizard - The wizard object from useWizard hook (see wizardPropType)
- * @param {string} [title] - Title displayed in modal header
- * @param {React.Node|Function} [children] - Content to render, can be JSX or render function
- * @param {Array} selection - Array of selected items for group creation
- */
-
-import PropTypes from 'prop-types';
-
-// Shared wizard PropType definition
-const wizardPropType = PropTypes.shape({
-  isOpen: PropTypes.bool.isRequired,
-  currentStep: PropTypes.number.isRequired,
-  totalSteps: PropTypes.number.isRequired,
-  formData: PropTypes.object.isRequired,
-  errors: PropTypes.object.isRequired,
-  isLoading: PropTypes.bool.isRequired,
-  isFirstStep: PropTypes.bool.isRequired,
-  isLastStep: PropTypes.bool.isRequired,
-  canGoBack: PropTypes.bool.isRequired,
-  canGoForward: PropTypes.bool.isRequired,
-  progress: PropTypes.number.isRequired,
-  open: PropTypes.func.isRequired,
-  close: PropTypes.func.isRequired,
-  next: PropTypes.func.isRequired,
-  previous: PropTypes.func.isRequired,
-  goToStep: PropTypes.func.isRequired,
-  updateField: PropTypes.func.isRequired,
-  setFieldError: PropTypes.func.isRequired,
-  submit: PropTypes.func.isRequired,
-  reset: PropTypes.func.isRequired
-});
-
-// MultiStepModal component propTypes
-MultiStepModal.propTypes = {
-  wizard: wizardPropType.isRequired,
-  title: PropTypes.string,
-  children: PropTypes.oneOfType([
-    PropTypes.node,
-    PropTypes.func
-  ]).isRequired
-};
-
-// TagInput component propTypes
-TagInput.propTypes = {
-  tags: PropTypes.arrayOf(PropTypes.string).isRequired,
-  onTagsChange: PropTypes.func.isRequired
-};
-
-// GroupCreationModal component propTypes
-GroupCreationModal.propTypes = {
-  wizard: wizardPropType.isRequired,
-  title: PropTypes.string,
-  children: PropTypes.oneOfType([
-    PropTypes.node,
-    PropTypes.func
-  ]),
-  selection: PropTypes.array.isRequired
-};
-
-// Export the shared wizard PropType for use in other components
-export { wizardPropType };
