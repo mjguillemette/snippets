@@ -647,3 +647,97 @@ export default function App() {
     </div>
   );
 }
+
+/**
+ * useWizard - A custom React hook for managing the state and logic of a multi-step wizard.
+ * Encapsulates all the core functionality, making UI components more reusable and presentational.
+ * 
+ * @param {Object} [config={}] - Configuration object for the wizard
+ * @param {number} [config.steps=3] - Total number of steps in the wizard
+ * @param {Function} [config.onComplete] - Async function called when wizard is completed, receives formData
+ * @param {Function} [config.onStepChange] - Function called when step changes, receives new step number
+ * @param {Object} [config.initialData={}] - Initial data object for the form
+ * 
+ * @returns {Object} Wizard state and actions object (see wizardPropType for full interface)
+ */
+
+/**
+ * MultiStepModal - A reusable UI component for a multi-step modal wizard.
+ * Receives all its logic from the useWizard hook via props.
+ * 
+ * @param {Object} wizard - The wizard object from useWizard hook (see wizardPropType)
+ * @param {string} [title="Create New Item"] - Title displayed in modal header
+ * @param {React.Node|Function} children - Content to render, can be JSX or render function
+ */
+
+/**
+ * TagInput - A simple component for managing tags input with add/remove functionality.
+ * 
+ * @param {string[]} tags - Array of current tag strings
+ * @param {Function} onTagsChange - Callback function called when tags array changes
+ */
+
+/**
+ * GroupCreationModal - A specialized modal for creating groups, built on top of MultiStepModal.
+ * 
+ * @param {Object} wizard - The wizard object from useWizard hook (see wizardPropType)
+ * @param {string} [title] - Title displayed in modal header
+ * @param {React.Node|Function} [children] - Content to render, can be JSX or render function
+ * @param {Array} selection - Array of selected items for group creation
+ */
+
+import PropTypes from 'prop-types';
+
+// Shared wizard PropType definition
+const wizardPropType = PropTypes.shape({
+  isOpen: PropTypes.bool.isRequired,
+  currentStep: PropTypes.number.isRequired,
+  totalSteps: PropTypes.number.isRequired,
+  formData: PropTypes.object.isRequired,
+  errors: PropTypes.object.isRequired,
+  isLoading: PropTypes.bool.isRequired,
+  isFirstStep: PropTypes.bool.isRequired,
+  isLastStep: PropTypes.bool.isRequired,
+  canGoBack: PropTypes.bool.isRequired,
+  canGoForward: PropTypes.bool.isRequired,
+  progress: PropTypes.number.isRequired,
+  open: PropTypes.func.isRequired,
+  close: PropTypes.func.isRequired,
+  next: PropTypes.func.isRequired,
+  previous: PropTypes.func.isRequired,
+  goToStep: PropTypes.func.isRequired,
+  updateField: PropTypes.func.isRequired,
+  setFieldError: PropTypes.func.isRequired,
+  submit: PropTypes.func.isRequired,
+  reset: PropTypes.func.isRequired
+});
+
+// MultiStepModal component propTypes
+MultiStepModal.propTypes = {
+  wizard: wizardPropType.isRequired,
+  title: PropTypes.string,
+  children: PropTypes.oneOfType([
+    PropTypes.node,
+    PropTypes.func
+  ]).isRequired
+};
+
+// TagInput component propTypes
+TagInput.propTypes = {
+  tags: PropTypes.arrayOf(PropTypes.string).isRequired,
+  onTagsChange: PropTypes.func.isRequired
+};
+
+// GroupCreationModal component propTypes
+GroupCreationModal.propTypes = {
+  wizard: wizardPropType.isRequired,
+  title: PropTypes.string,
+  children: PropTypes.oneOfType([
+    PropTypes.node,
+    PropTypes.func
+  ]),
+  selection: PropTypes.array.isRequired
+};
+
+// Export the shared wizard PropType for use in other components
+export { wizardPropType };
