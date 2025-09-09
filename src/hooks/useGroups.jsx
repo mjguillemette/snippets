@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from './useAuth'; // Assuming you have this hook
+import { useAuth } from './useAuth';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '';
 
@@ -26,20 +26,17 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '';
  * @returns {Object} Groups data and operations
  */
 export const useGroups = (options = {}) => {
-  const { token, userId, sessionId, userName } = useAuth(); // Added userName for createdBy
+  const { token, userId, sessionId, userName } = useAuth();
   
-  // State for groups list
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  // State for individual operations
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [operationError, setOperationError] = useState(null);
 
-  // Base headers with session info
   const getHeaders = useCallback(() => ({
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`,
@@ -48,15 +45,19 @@ export const useGroups = (options = {}) => {
     ...options.headers
   }), [token, userId, sessionId, options.headers]);
 
-  // Fetch all groups
-  const fetchGroups = useCallback(async () => {
+  const fetchGroups = useCallback(async (visibilityFilter) => {
     setLoading(true);
     setError(null);
     
+    const retrieveRequest = {
+        groupVisibility: visibilityFilter,
+    };
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/groups`, {
-        method: 'GET',
-        headers: getHeaders()
+      const response = await fetch(`${API_BASE_URL}/api/chimpbeRetrieveGroup`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(retrieveRequest)
       });
 
       if (!response.ok) {
@@ -78,12 +79,10 @@ export const useGroups = (options = {}) => {
     }
   }, [getHeaders]);
 
-  // Create a new group
   const createGroup = useCallback(async (groupData) => {
     setCreating(true);
     setOperationError(null);
     
-    // Ensure required fields and set defaults
     const payload = {
       name: groupData.name,
       filterValue: groupData.filterValue || {},
@@ -94,7 +93,7 @@ export const useGroups = (options = {}) => {
     };
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/groups`, {
+      const response = await fetch(`${API_BASE_URL}/api/chimpbeCreateGroup`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(payload)
@@ -108,10 +107,7 @@ export const useGroups = (options = {}) => {
       }
 
       const newGroup = await response.json();
-      
-      // Optimistically update local state
       setGroups(prevGroups => [...prevGroups, newGroup]);
-      
       return newGroup;
     } catch (err) {
       console.error('[useGroups] Error creating group:', err);
@@ -122,13 +118,11 @@ export const useGroups = (options = {}) => {
     }
   }, [getHeaders, userName, userId]);
 
-  // Update an existing group
   const updateGroup = useCallback(async (groupId, updates) => {
     setUpdating(true);
     setOperationError(null);
     
-    // Only include fields that are being updated
-    const payload = {};
+    const payload = { id: groupId };
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.filterValue !== undefined) payload.filterValue = updates.filterValue;
     if (updates.visibility !== undefined) payload.visibility = updates.visibility;
@@ -136,8 +130,8 @@ export const useGroups = (options = {}) => {
     if (updates.description !== undefined) payload.description = updates.description;
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}`, {
-        method: 'PUT',
+      const response = await fetch(`${API_BASE_URL}/api/chimpbeUpdateGroup`, {
+        method: 'POST', 
         headers: getHeaders(),
         body: JSON.stringify(payload)
       });
@@ -150,14 +144,11 @@ export const useGroups = (options = {}) => {
       }
 
       const updatedGroup = await response.json();
-      
-      // Update local state
       setGroups(prevGroups => 
         prevGroups.map(group => 
           group.id === groupId ? updatedGroup : group
         )
       );
-      
       return updatedGroup;
     } catch (err) {
       console.error('[useGroups] Error updating group:', err);
@@ -168,15 +159,15 @@ export const useGroups = (options = {}) => {
     }
   }, [getHeaders]);
 
-  // Delete a group
   const deleteGroup = useCallback(async (groupId) => {
     setDeleting(true);
     setOperationError(null);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}`, {
-        method: 'DELETE',
-        headers: getHeaders()
+      const response = await fetch(`${API_BASE_URL}/api/chimpbeDeleteGroup`, {
+        method: 'POST', 
+        headers: getHeaders(),
+        body: JSON.stringify({ id: groupId })
       });
 
       if (!response.ok) {
@@ -186,11 +177,9 @@ export const useGroups = (options = {}) => {
         );
       }
 
-      // Remove from local state
       setGroups(prevGroups => 
         prevGroups.filter(group => group.id !== groupId)
       );
-      
       return { success: true, deletedId: groupId };
     } catch (err) {
       console.error('[useGroups] Error deleting group:', err);
@@ -201,13 +190,13 @@ export const useGroups = (options = {}) => {
     }
   }, [getHeaders]);
 
-  // Batch operations
   const deleteMultipleGroups = useCallback(async (groupIds) => {
     setDeleting(true);
     setOperationError(null);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/groups/batch-delete`, {
+      // NOTE: Endpoint assumed to follow the new pattern. Update if different.
+      const response = await fetch(`${API_BASE_URL}/api/chimpbeBatchDeleteGroups`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ groupIds })
@@ -221,12 +210,9 @@ export const useGroups = (options = {}) => {
       }
 
       const result = await response.json();
-      
-      // Remove deleted groups from local state
       setGroups(prevGroups => 
         prevGroups.filter(group => !groupIds.includes(group.id))
       );
-      
       return result;
     } catch (err) {
       console.error('[useGroups] Error deleting multiple groups:', err);
@@ -237,12 +223,10 @@ export const useGroups = (options = {}) => {
     }
   }, [getHeaders]);
 
-  // Refresh groups (force refetch)
   const refresh = useCallback(() => {
     return fetchGroups();
   }, [fetchGroups]);
 
-  // Utility functions for working with filter values
   const addFilterItems = useCallback(async (groupId, filterType, items) => {
     const group = groups.find(g => g.id === groupId);
     if (!group) throw new Error('Group not found');
@@ -332,7 +316,6 @@ export const useGroups = (options = {}) => {
     });
   }, [groups]);
 
-  // Utility functions for working with groups
   const addPartNumbers = useCallback(async (groupId, partNumbers) => {
     const group = groups.find(g => g.id === groupId);
     if (!group) throw new Error('Group not found');
@@ -357,7 +340,6 @@ export const useGroups = (options = {}) => {
     return updateGroup(groupId, { filterValue });
   }, [updateGroup]);
 
-  // Filter groups by various criteria
   const getGroupsByVisibility = useCallback((visibility) => {
     return groups.filter(g => g.visibility === visibility);
   }, [groups]);
@@ -381,13 +363,11 @@ export const useGroups = (options = {}) => {
     );
   }, [groups]);
 
-  // Clear errors
   const clearError = useCallback(() => {
     setError(null);
     setOperationError(null);
   }, []);
 
-  // Initial fetch
   useEffect(() => {
     if (token && userId) {
       fetchGroups();
@@ -397,19 +377,19 @@ export const useGroups = (options = {}) => {
   return {
     // Data
     groups,
-    
+
     // Loading states
     loading,
     creating,
     updating,
     deleting,
     isProcessing: creating || updating || deleting,
-    
+
     // Errors
     error,
     operationError,
-    
-    // CRUD Actions
+
+    // Operations
     fetchGroups,
     createGroup,
     updateGroup,
@@ -417,14 +397,14 @@ export const useGroups = (options = {}) => {
     deleteMultipleGroups,
     refresh,
     clearError,
-    
-    // Utility actions for common operations
+
+    // Utility actions
     addPartNumbers,
     removePartNumbers,
     updateVisibility,
     updateFilterValue,
-    
-    // Filter value specific utilities
+
+    // Filter value utilities
     addFilterItems,
     removeFilterItems,
     setFilterItems,
@@ -433,14 +413,14 @@ export const useGroups = (options = {}) => {
     getGroupsWithLegacyIds,
     getGroupsWithTestResults,
     searchGroupsByFilterValue,
-    
+
     // Query/Filter utilities
     getGroupById: (id) => groups.find(g => g.id === id),
     getGroupsByVisibility,
     getGroupsByCreator,
     getGroupsForPartNumber,
     searchGroups,
-    
+
     // Computed properties
     isEmpty: groups.length === 0,
     count: groups.length,
@@ -449,235 +429,3 @@ export const useGroups = (options = {}) => {
     myGroups: groups.filter(g => g.createdBy === userId)
   };
 };
-
-// Example usage:
-/*
-function GroupsManager() {
-  const {
-    groups,
-    loading,
-    creating,
-    error,
-    createGroup,
-    updateGroup,
-    deleteGroup,
-    addPartNumbers,
-    removePartNumbers,
-    updateVisibility,
-    addFilterItems,
-    removeFilterItems,
-    setFilterItems,
-    getGroupsWithLegacyIds,
-    getGroupsWithTestResults,
-    searchGroups,
-    myGroups,
-    publicGroups,
-    refresh
-  } = useGroups();
-
-  // Create a new group with legacyId filter
-  const handleCreateLegacyGroup = async () => {
-    try {
-      const newGroup = await createGroup({
-        name: 'Temperature Test Suite',
-        description: 'All temperature-related ambient tests',
-        filterValue: {
-          legacyId: ["cold ambient", "hot ambient 120", "hot 120", "cold ambient 80"]
-        },
-        visibility: 'private',
-        appliesTo: ['PN-12345', 'PN-67890']
-      });
-      console.log('Legacy group created:', newGroup);
-    } catch (err) {
-      console.error('Failed to create group:', err);
-    }
-  };
-
-  // Create a new group with testResultName filter
-  const handleCreateTestResultGroup = async () => {
-    try {
-      const newGroup = await createGroup({
-        name: 'Audio Analysis Tests',
-        description: 'Standard audio measurement tests',
-        filterValue: {
-          testResultName: ["Gain", "EQ 1", "EQ 2", "Power on voltage", "Spectrogram"]
-        },
-        visibility: 'public',
-        appliesTo: ['PN-AUDIO-001', 'PN-AUDIO-002']
-      });
-      console.log('Test result group created:', newGroup);
-    } catch (err) {
-      console.error('Failed to create group:', err);
-    }
-  };
-
-  // Add legacy IDs to existing group
-  const handleAddLegacyIds = async (groupId) => {
-    try {
-      await addFilterItems(groupId, 'legacyId', ["cold ambient 60", "cold ambient 20"]);
-      console.log('Legacy IDs added');
-    } catch (err) {
-      console.error('Failed to add legacy IDs:', err);
-    }
-  };
-
-  // Add test result names to existing group
-  const handleAddTestResults = async (groupId) => {
-    try {
-      await addFilterItems(groupId, 'testResultName', ["STTO +/-", "Phase Response"]);
-      console.log('Test results added');
-    } catch (err) {
-      console.error('Failed to add test results:', err);
-    }
-  };
-
-  // Remove specific filter items
-  const handleRemoveFilterItems = async (groupId) => {
-    try {
-      await removeFilterItems(groupId, 'legacyId', ["hot 120"]);
-      console.log('Filter items removed');
-    } catch (err) {
-      console.error('Failed to remove filter items:', err);
-    }
-  };
-
-  // Replace all filter items of a type
-  const handleReplaceFilterItems = async (groupId) => {
-    try {
-      await setFilterItems(groupId, 'testResultName', [
-        "Gain", 
-        "Frequency Response", 
-        "THD+N"
-      ]);
-      console.log('Filter items replaced');
-    } catch (err) {
-      console.error('Failed to replace filter items:', err);
-    }
-  };
-
-  // Get specialized groups
-  const legacyGroups = getGroupsWithLegacyIds();
-  const testResultGroups = getGroupsWithTestResults();
-
-  // Search functionality
-  const [searchTerm, setSearchTerm] = useState('');
-  const filteredGroups = searchTerm ? searchGroups(searchTerm) : groups;
-
-  if (loading) return <div>Loading groups...</div>;
-  if (error) return <div>Error: {error}</div>;
-
-  return (
-    <div>
-      <div>
-        <h2>My Groups ({myGroups.length})</h2>
-        <button onClick={handleCreateLegacyGroup} disabled={creating}>
-          Create Legacy Test Group
-        </button>
-        <button onClick={handleCreateTestResultGroup} disabled={creating}>
-          Create Test Result Group
-        </button>
-        <button onClick={refresh}>Refresh</button>
-      </div>
-
-      <input
-        type="text"
-        placeholder="Search groups, tests, or part numbers..."
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-      />
-
-      <div>
-        <h3>Groups with Legacy IDs: {legacyGroups.length}</h3>
-        <h3>Groups with Test Results: {testResultGroups.length}</h3>
-      </div>
-      
-      {filteredGroups.map(group => (
-        <div key={group.id}>
-          <h3>{group.name}</h3>
-          {group.description && <p>{group.description}</p>}
-          
-          {group.filterValue?.legacyId && (
-            <div>
-              <strong>Legacy IDs:</strong>
-              <ul>
-                {group.filterValue.legacyId.map((id, idx) => (
-                  <li key={idx}>{id}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          
-          {group.filterValue?.testResultName && (
-            <div>
-              <strong>Test Results:</strong>
-              <ul>
-                {group.filterValue.testResultName.map((name, idx) => (
-                  <li key={idx}>{name}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          
-          <div>
-            <span>Visibility: {group.visibility}</span>
-            <span>Applies to: {group.appliesTo.length} parts</span>
-          </div>
-          
-          <div>
-            <button onClick={() => handleAddLegacyIds(group.id)}>
-              Add Legacy IDs
-            </button>
-            <button onClick={() => handleAddTestResults(group.id)}>
-              Add Test Results
-            </button>
-            <button onClick={() => handleRemoveFilterItems(group.id)}>
-              Remove Items
-            </button>
-            <button onClick={() => deleteGroup(group.id)}>
-              Delete
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Example: Using groups as filters in a test report component
-function TestReportFilter() {
-  const { groups, getGroupsWithLegacyIds, getGroupsWithTestResults } = useGroups();
-  const [filterType, setFilterType] = useState('all');
-  
-  const displayGroups = filterType === 'legacy' 
-    ? getGroupsWithLegacyIds()
-    : filterType === 'testResult'
-    ? getGroupsWithTestResults()
-    : groups;
-  
-  return (
-    <div>
-      <h3>Select Test Filters</h3>
-      <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-        <option value="all">All Filters</option>
-        <option value="legacy">Legacy Test Filters</option>
-        <option value="testResult">Test Result Filters</option>
-      </select>
-      
-      {displayGroups.map(group => (
-        <div key={group.id}>
-          <label>
-            <input type="checkbox" />
-            {group.name}
-            {group.filterValue?.legacyId && (
-              <span> ({group.filterValue.legacyId.length} legacy tests)</span>
-            )}
-            {group.filterValue?.testResultName && (
-              <span> ({group.filterValue.testResultName.length} test results)</span>
-            )}
-          </label>
-        </div>
-      ))}
-    </div>
-  );
-}
-*/
