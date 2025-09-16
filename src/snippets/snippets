@@ -1,139 +1,147 @@
-// This should be the robust processor we developed earlier
-const processGroupData = (key, items) => {
-    if (!Array.isArray(items)) {
-        return { key, count: 0, passRate: 0, items: [] };
-    }
-    const passCount = items.filter(i => i.testResult !== 'Fail').length;
-    const totalCount = items.length;
-    const passRate = totalCount > 0 ? (passCount / totalCount) * 100 : 0;
-    const timestamps = items.map(i => new Date(i.parentRecordData?.stopTime)).filter(d => !isNaN(d));
-    const mostRecentDateRaw = timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
+// In GroupListView.jsx
 
-    return {
-        key: key,
-        count: totalCount,
-        passRate: parseFloat(passRate.toFixed(1)),
-        mostRecentDate: mostRecentDateRaw?.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) || 'N/A',
-        mostRecentDateRaw,
-        items: items,
-    };
+const GroupListView = ({ finalData, thenByKey /* ...other props... */ }) => {
+  // ... existing state and handlers ...
+
+  // The main render logic now becomes a simple switch
+  return (
+    <>
+      {/* ... Toolbar remains the same ... */}
+
+      {finalData.length > 0 ? (
+        thenByKey ? (
+          <NestedGroupView
+            data={finalData}
+            {...{ selection, handleSelectionChange, handleAnalyze }}
+          />
+        ) : (
+          <FlatGroupView
+            data={paginatedItems} // Flat view uses pagination directly
+            {...{ selection, handleSelectionChange, handleAnalyze }}
+          />
+        )
+      ) : (
+        <div className="text-center py-12 text-default-500">
+          <p>No results found.</p>
+        </div>
+      )}
+
+      {/* Pagination is only shown for the flat view */}
+      {!thenByKey && pages > 1 && (
+        <div className="flex w-full justify-center mt-8">
+          <Pagination
+            isCompact
+            showControls
+            page={page}
+            total={pages}
+            onChange={setPage}
+          />
+        </div>
+      )}
+
+      {/* Modal remains the same */}
+    </>
+  );
 };
 
-const useGroupedData = (data, groupBy, thenBy) => {
-    return useMemo(() => {
-        if (!data || data.length === 0 || !groupBy) {
-            return [];
-        }
+// This component renders the simple grid of cards
+const FlatGroupView = ({
+  data,
+  selection,
+  handleSelectionChange,
+  handleAnalyze
+}) => (
+  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+    {data.map((group) => (
+      <GroupCard
+        key={group.key}
+        group={group}
+        isSelected={selection.has(group.key)}
+        onSelectionChange={() => handleSelectionChange(group.key)}
+        onAnalyze={() => handleAnalyze(group)}
+      />
+    ))}
+  </div>
+);
 
-        let grouped = _.groupBy(data, groupBy);
-        
-        if (thenBy) {
-            grouped = _.mapValues(grouped, (items) => _.groupBy(items, thenBy));
-            return Object.entries(grouped).map(([primaryKey, subGroups]) => {
-                // Fix for empty primary keys
-                const finalPrimaryKey = primaryKey.trim() === '' ? 'Unknown' : primaryKey;
-                const processedCards = Object.entries(subGroups).map(([secondaryKey, items]) => {
-                    // Fix for empty secondary keys
-                    const finalSecondaryKey = secondaryKey.trim() === '' ? 'Unknown' : secondaryKey;
-                    return processGroupData(finalSecondaryKey, items);
-                });
-                return {
-                    groupKey: finalPrimaryKey,
-                    groupCards: processedCards,
-                };
-            });
-        } else {
-            return Object.entries(grouped).map(([key, values]) => {
-                const finalKey = key.trim() === '' ? 'Unknown' : key;
-                return processGroupData(finalKey, values);
-            });
-        }
-    }, [data, groupBy, thenBy]);
+// This component renders the collapsible, nested view
+const NestedGroupView = ({
+  data,
+  selection,
+  handleSelectionChange,
+  handleAnalyze
+}) => (
+  <div className="space-y-4">
+    {data.map((primaryGroup) => (
+      <PrimaryGroup
+        key={primaryGroup.groupKey}
+        primaryGroup={primaryGroup}
+        selection={selection}
+        onSelectionChange={handleSelectionChange}
+        onAnalyze={handleAnalyze}
+      />
+    ))}
+  </div>
+);
+
+// We also need the PrimaryGroup and GroupCard sub-components
+const PrimaryGroup = ({
+  primaryGroup,
+  selection,
+  onSelectionChange,
+  onAnalyze
+}) => {
+  const [isOpen, setIsOpen] = useState(true);
+
+  return (
+    <Card shadow="none" className="border">
+      <CardHeader className="cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
+        <div className="flex justify-between items-center w-full">
+          <span className="font-semibold">{primaryGroup.groupKey}</span>
+          <Chip size="sm">{primaryGroup.groupCards.length} groups</Chip>
+        </div>
+      </CardHeader>
+      {isOpen && (
+        <CardBody>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {primaryGroup.groupCards.map((card) => (
+              <GroupCard
+                key={card.key}
+                group={card}
+                isSelected={selection.has(card.key)}
+                onSelectionChange={() => onSelectionChange(card.key)}
+                onAnalyze={() => onAnalyze(card)}
+              />
+            ))}
+          </div>
+        </CardBody>
+      )}
+    </Card>
+  );
 };
 
-const useFilteredData = (structuredData, searchQuery, thenBy) => {
-    return useMemo(() => {
-        if (!searchQuery) {
-            return structuredData;
-        }
-        const lowerCaseQuery = searchQuery.toLowerCase();
-        
-        if (thenBy) {
-             return structuredData.map(primaryGroup => {
-                const matchingCards = primaryGroup.groupCards.filter(card =>
-                    card.key.toLowerCase().includes(lowerCaseQuery)
-                );
-                if (matchingCards.length > 0) {
-                    return { ...primaryGroup, groupCards: matchingCards };
-                }
-                return null;
-            }).filter(Boolean);
-        } else {
-             return structuredData.filter(item => item.key.toLowerCase().includes(lowerCaseQuery));
-        }
-    }, [structuredData, searchQuery, thenBy]);
-};
-
-const useSortedData = (filteredData, sortBy, sortDirection, thenBy) => {
-    return useMemo(() => {
-        if (!sortBy || !filteredData) return filteredData;
-        
-        const sorted = _.orderBy(filteredData, [item => {
-            // For nested data, sort by the primary group key. For flat, sort by the item key.
-            return thenBy ? item.groupKey : item.key;
-        }], [sortDirection]);
-
-        if (thenBy) {
-            // If nested, also sort the cards within each group
-            sorted.forEach(group => {
-                group.groupCards = _.orderBy(group.groupCards, [sortBy], [sortDirection]);
-            });
-        }
-        
-        return sorted;
-    }, [filteredData, sortBy, sortDirection, thenBy]);
-};
-
-
-// --- Main Component ---
-
-const DataDashboard = ({ rawData }) => {
-    // State for user-controlled inputs
-    const [groupBy, setGroupBy] = useState('testResult');
-    const [thenBy, setThenBy] = useState(''); // Empty string means no secondary grouping
-    const [searchQuery, setSearchQuery] = useState('');
-    const [sortBy, setSortBy] = useState('count');
-    const [sortDirection, setSortDirection] = useState('desc');
-    const [isProcessing, setIsProcessing] = useState(true);
-    const [finalData, setFinalData] = useState([]);
-    const [page, setPage] = useState(1);
-    const rowsPerPage = 12;
-
-    // --- HOOK CHAIN ---
-    const groupedData = useGroupedData(rawData, groupBy, thenBy);
-    const filteredData = useFilteredData(groupedData, searchQuery, thenBy);
-    const sortedData = useSortedData(filteredData, sortBy, sortDirection, thenBy);
-
-    useEffect(() => {
-        setIsProcessing(true);
-    }, [rawData, groupBy, thenBy, searchQuery, sortBy, sortDirection]);
-    
-    useEffect(() => {
-        setFinalData(sortedData);
-        setIsProcessing(false);
-    }, [sortedData]);
-    
-    // --- Pagination Logic ---
-    const flatDataForPagination = useMemo(() => {
-        return thenBy ? finalData.flatMap(group => group.groupCards) : finalData;
-    }, [finalData, thenBy]);
-    
-    const pages = Math.ceil(flatDataForPagination.length / rowsPerPage);
-    const paginatedItems = useMemo(() => {
-        const start = (page - 1) * rowsPerPage;
-        return flatDataForPagination.slice(start, start + rowsPerPage);
-    }, [page, flatDataForPagination]);
-
-    if (isProcessing) {
-        return <div>Loading...</div>; // Or a spinner component
-    }
+// A single card component, slightly refactored to be reusable
+const GroupCard = ({ group, isSelected, onSelectionChange, onAnalyze }) => (
+  <Card shadow="sm" isPressable onPress={onAnalyze}>
+    <CardHeader className="flex justify-between items-start">
+      <div className="flex flex-col items-start">
+        <p className="text-md font-bold truncate">{group.key}</p>
+        <p className="text-sm text-default-500">{`${group.count} tests`}</p>
+      </div>
+      <Checkbox
+        aria-label={`Select ${group.key}`}
+        isSelected={isSelected}
+        onValueChange={onSelectionChange}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </CardHeader>
+    <CardBody>
+      <Progress
+        value={group.passRate}
+        color={group.passRate >= 90 ? "success" : "warning"}
+        label={`${group.passRate.toFixed(1)}% Pass Rate`}
+        showValueLabel
+      />
+    </CardBody>
+  </Card>
+);
