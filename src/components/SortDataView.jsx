@@ -3,7 +3,13 @@
 import React, { useState, useMemo } from 'react';
 import PropTypes from 'prop-types';
 
-// Import NextUI components and icons - Assumes these are installed in your project
+// Assumes these hooks are in a central file, e.g., src/hooks/dataHooks.js
+import { useProcessedData, useFilteredData, useSortedData } from '../hooks/dataHooks'; 
+
+// Assumes this is your detailed drill-down component
+import GroupAnalysisView from './GroupAnalysisView'; 
+
+// Assumes these libraries are installed in your project
 import {
   Button,
   Card,
@@ -17,74 +23,13 @@ import {
   ModalBody,
   ModalContent,
   ModalHeader,
+  Pagination,
   Progress,
   Select,
   SelectItem,
   useDisclosure,
 } from '@nextui-org/react';
-import { LuArrowUpDown, LuSearch, LuTrash, LuX } from 'react-icons/lu';
-
-// --- Data Processing Logic (formerly in dataProcessor.js and useProcessedData.js) ---
-
-const TEST_RESULT_FAIL = 'Fail';
-const UNKNOWN_GROUP = 'Unknown Group';
-const NOT_APPLICABLE = 'N/A';
-
-// Note: `parseDate` is an assumed utility. If not globally available, define it here.
-// const parseDate = (dateString) => new Date(dateString);
-
-const processGroupData = (key, values) => {
-    const summary = values.reduce((acc, item) => {
-        if (item.testResult !== TEST_RESULT_FAIL) acc.passCount++; else acc.failCount++;
-        if (item.dutIdentifier) acc.uniqueIdentifiers.add(item.dutIdentifier[0]);
-        // `parseDate` is assumed to exist and return a valid Date object or null
-        const stopTime = typeof parseDate !== 'undefined' ? parseDate(item.parentRecordData?.stopTime) : new Date(item.parentRecordData?.stopTime);
-        if (stopTime instanceof Date && !isNaN(stopTime)) acc.timestamps.push(stopTime);
-        return acc;
-    }, { passCount: 0, failCount: 0, uniqueIdentifiers: new Set(), timestamps: [] });
-
-    const totalCount = values.length;
-    const passRate = totalCount ? (summary.passCount / totalCount) * 100 : 0;
-    const mostRecentDateRaw = summary.timestamps.length > 0 ? new Date(Math.max(...summary.timestamps)) : null;
-
-    return {
-        key: key ?? UNKNOWN_GROUP,
-        count: totalCount,
-        passRate: parseFloat(passRate.toFixed(1)),
-        passCount: summary.passCount,
-        failCount: summary.failCount,
-        uniqueIdentifiers: summary.uniqueIdentifiers.size,
-        mostRecentDate: mostRecentDateRaw ? mostRecentDateRaw.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : NOT_APPLICABLE,
-        mostRecentDateRaw,
-        tests: values,
-        data: values.map(v => v.data), // Simplified data mapping
-    };
-};
-
-const useProcessedData = (groupedData) => {
-    return useMemo(() => {
-        if (!groupedData || Object.keys(groupedData).length === 0) return [];
-        return Object.entries(groupedData).map(([key, values]) => processGroupData(key, values));
-    }, [groupedData]);
-};
-
-
-// --- Placeholder for the Detailed Analysis View ---
-
-const GroupAnalysisView = ({ group }) => (
-  <div className="p-4">
-    <h2 className="text-2xl font-bold mb-4">{group.key}</h2>
-    <p>This is the detailed analysis view. Build out charts and tables here.</p>
-    <pre className="bg-content2 p-4 rounded-md overflow-auto">
-      {JSON.stringify(group, (key, value) => (key === 'tests' || key === 'data') ? `[${value.length} items]` : value, 2)}
-    </pre>
-  </div>
-);
-
-GroupAnalysisView.propTypes = {
-  group: PropTypes.object.isRequired,
-};
-
+import { LuArrowUpDown, LuSearch } from 'react-icons/lu';
 
 // --- PropType Definitions ---
 
@@ -100,29 +45,39 @@ const processedGroupShape = PropTypes.shape({
   data: PropTypes.array.isRequired,
 });
 
-
 // --- Main Components ---
 
 const GroupListView = ({ processedData }) => {
   const [selection, setSelection] = useState(new Set());
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortDescriptor, setSortDescriptor] = useState({ key: 'count', direction: 'desc' });
+  const [sortBy, setSortBy] = useState({ key: 'count', direction: 'desc' });
+  const [thenByKey, setThenByKey] = useState('key'); // State for secondary sort key
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(8);
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  const filteredAndSortedData = useMemo(() => {
-    let items = [...processedData];
-    if (searchQuery) {
-      items = items.filter((group) => group.key.toLowerCase().includes(searchQuery.toLowerCase()));
+  // Create the array of sort descriptors for multi-level sorting
+  const sortDescriptors = useMemo(() => {
+    const descriptors = [{ ...sortBy }];
+    // Add the secondary sort key if it's different from the primary
+    if (thenByKey && thenByKey !== sortBy.key) {
+      descriptors.push({ key: thenByKey, direction: 'asc' }); // Default secondary to ascending
     }
-    items.sort((a, b) => {
-      const first = a[sortDescriptor.key];
-      const second = b[sortDescriptor.key];
-      const cmp = first < second ? -1 : first > second ? 1 : 0;
-      return sortDescriptor.direction === 'asc' ? cmp : -cmp;
-    });
-    return items;
-  }, [processedData, searchQuery, sortDescriptor]);
+    return descriptors;
+  }, [sortBy, thenByKey]);
+
+  // Chain the custom hooks to process the data for display
+  const filteredData = useFilteredData(processedData, searchQuery);
+  const sortedData = useSortedData(filteredData, sortDescriptors);
+
+  // Calculate pagination based on the final sorted and filtered data
+  const pages = Math.ceil(sortedData.length / rowsPerPage);
+  const paginatedItems = useMemo(() => {
+    const start = (page - 1) * rowsPerPage;
+    const end = start + rowsPerPage;
+    return sortedData.slice(start, end);
+  }, [page, rowsPerPage, sortedData]);
 
   const selectedItems = useMemo(() => processedData.filter((group) => selection.has(group.key)), [selection, processedData]);
 
@@ -138,6 +93,7 @@ const GroupListView = ({ processedData }) => {
       count: selectedItems.reduce((acc, item) => acc + item.count, 0),
       passCount: selectedItems.reduce((acc, item) => acc + item.passCount, 0),
       failCount: selectedItems.reduce((acc, item) => acc + item.failCount, 0),
+      // Use a getter for passRate to calculate it dynamically
       get passRate() { return this.count > 0 ? (this.passCount / this.count) * 100 : 0; },
       tests: selectedItems.flatMap((item) => item.tests),
       data: selectedItems.flatMap((item) => item.data),
@@ -155,7 +111,7 @@ const GroupListView = ({ processedData }) => {
   };
 
   const toggleSortDirection = () => {
-    setSortDescriptor((prev) => ({ ...prev, direction: prev.direction === 'asc' ? 'desc' : 'asc' }));
+    setSortBy((prev) => ({ ...prev, direction: prev.direction === 'asc' ? 'desc' : 'asc' }));
   };
 
   return (
@@ -168,9 +124,19 @@ const GroupListView = ({ processedData }) => {
           />
           <div className="flex items-center gap-2">
             <Select
-              aria-label="Sort by" placeholder="Sort by" selectedKeys={[sortDescriptor.key]}
-              onSelectionChange={(keys) => setSortDescriptor((prev) => ({ ...prev, key: Array.from(keys)[0] }))}
-              className="w-48"
+              aria-label="Sort by" placeholder="Sort by" selectedKeys={[sortBy.key]}
+              onSelectionChange={(keys) => setSortBy((prev) => ({ ...prev, key: Array.from(keys)[0] }))}
+              className="w-40"
+            >
+              <SelectItem key="key">Name</SelectItem>
+              <SelectItem key="count">Test Count</SelectItem>
+              <SelectItem key="passRate">Pass Rate</SelectItem>
+              <SelectItem key="mostRecentDateRaw">Most Recent</SelectItem>
+            </Select>
+            <Select
+              aria-label="Then by" placeholder="Then by" selectedKeys={[thenByKey]}
+              onSelectionChange={(keys) => setThenByKey(Array.from(keys)[0])}
+              className="w-40"
             >
               <SelectItem key="key">Name</SelectItem>
               <SelectItem key="count">Test Count</SelectItem>
@@ -187,17 +153,15 @@ const GroupListView = ({ processedData }) => {
             <div className="flex items-center gap-2">
               <Chip>{`${selection.size} selected`}</Chip>
               <Button color="primary" variant="flat" onPress={handleAnalyzeSelection}>Analyze Selection</Button>
-              <Button isIconOnly variant="light" aria-label="Clear selection" onPress={() => setSelection(new Set())}>
-                <LuTrash />
-              </Button>
+              <Button variant="light" aria-label="Clear selection" onPress={() => setSelection(new Set())}>Clear</Button>
             </div>
           )}
         </div>
       </div>
 
-      {filteredAndSortedData.length > 0 ? (
+      {paginatedItems.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {filteredAndSortedData.map((group) => (
+          {paginatedItems.map((group) => (
             <Card shadow="sm" key={group.key} isPressable onPress={() => handleAnalyze(group)}>
               <CardHeader className="flex justify-between items-start">
                 <div className="flex flex-col items-start"><p className="text-md font-bold truncate">{group.key}</p><p className="text-sm text-default-500">{`${group.count} tests`}</p></div>
@@ -214,11 +178,33 @@ const GroupListView = ({ processedData }) => {
         <div className="text-center py-12 text-default-500"><p>No results found.</p><p className="text-sm">Try adjusting your search or filters.</p></div>
       )}
 
+      {pages > 1 && (
+        <div className="flex w-full justify-center mt-8 gap-4 items-center">
+          <Pagination isCompact showControls showShadow color="primary" page={page} total={pages} onChange={setPage} />
+          <Select
+            aria-label="Items per page"
+            className="w-28"
+            selectedKeys={[rowsPerPage.toString()]}
+            onSelectionChange={(keys) => {
+              setRowsPerPage(Number(Array.from(keys)[0]));
+              setPage(1);
+            }}
+          >
+            <SelectItem key="8">8 / page</SelectItem>
+            <SelectItem key="12">12 / page</SelectItem>
+            <SelectItem key="20">20 / page</SelectItem>
+          </Select>
+        </div>
+      )}
+
       <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
         <ModalContent>
           {(onClose) => (
             <>
-              <ModalHeader className="flex justify-between items-center">Group Analysis<Button isIconOnly variant="light" onPress={onClose}><LuX /></Button></ModalHeader>
+              <ModalHeader className="flex justify-between items-center">
+                Group Analysis
+                <Button variant="light" onPress={onClose}>Close</Button>
+              </ModalHeader>
               <ModalBody>{selectedGroup && <GroupAnalysisView group={selectedGroup} />}</ModalBody>
             </>
           )}
