@@ -1,152 +1,139 @@
-// hooks/useGroupedData.js
-import { useMemo } from 'react';
-import _ from 'lodash';
-
-// This function can be kept separate or moved inside the hook if not used elsewhere.
-const processGroupData = (key, items, groupBy) => {
-  // Assuming 'processGroupData' exists and returns an object like { key, ...data }
-  // For this example, let's create a placeholder implementation:
-  return {
-    key: key,
-    count: items.length,
-    items: items,
-    // ... other aggregated data
-  };
-};
-
-export const useGroupedData = (data, groupBy, thenBy) => {
-  const structuredData = useMemo(() => {
-    if (!data.length || !groupBy) {
-      return [];
+// This should be the robust processor we developed earlier
+const processGroupData = (key, items) => {
+    if (!Array.isArray(items)) {
+        return { key, count: 0, passRate: 0, items: [] };
     }
+    const passCount = items.filter(i => i.testResult !== 'Fail').length;
+    const totalCount = items.length;
+    const passRate = totalCount > 0 ? (passCount / totalCount) * 100 : 0;
+    const timestamps = items.map(i => new Date(i.parentRecordData?.stopTime)).filter(d => !isNaN(d));
+    const mostRecentDateRaw = timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
 
-    // Step 1: Perform initial and secondary grouping
-    let grouped = _.groupBy(data, groupBy);
-    if (thenBy) {
-      grouped = _.mapValues(grouped, (items) => _.groupBy(items, thenBy));
+    return {
+        key: key,
+        count: totalCount,
+        passRate: parseFloat(passRate.toFixed(1)),
+        mostRecentDate: mostRecentDateRaw?.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) || 'N/A',
+        mostRecentDateRaw,
+        items: items,
+    };
+};
+
+const useGroupedData = (data, groupBy, thenBy) => {
+    return useMemo(() => {
+        if (!data || data.length === 0 || !groupBy) {
+            return [];
+        }
+
+        let grouped = _.groupBy(data, groupBy);
+        
+        if (thenBy) {
+            grouped = _.mapValues(grouped, (items) => _.groupBy(items, thenBy));
+            return Object.entries(grouped).map(([primaryKey, subGroups]) => {
+                // Fix for empty primary keys
+                const finalPrimaryKey = primaryKey.trim() === '' ? 'Unknown' : primaryKey;
+                const processedCards = Object.entries(subGroups).map(([secondaryKey, items]) => {
+                    // Fix for empty secondary keys
+                    const finalSecondaryKey = secondaryKey.trim() === '' ? 'Unknown' : secondaryKey;
+                    return processGroupData(finalSecondaryKey, items);
+                });
+                return {
+                    groupKey: finalPrimaryKey,
+                    groupCards: processedCards,
+                };
+            });
+        } else {
+            return Object.entries(grouped).map(([key, values]) => {
+                const finalKey = key.trim() === '' ? 'Unknown' : key;
+                return processGroupData(finalKey, values);
+            });
+        }
+    }, [data, groupBy, thenBy]);
+};
+
+const useFilteredData = (structuredData, searchQuery, thenBy) => {
+    return useMemo(() => {
+        if (!searchQuery) {
+            return structuredData;
+        }
+        const lowerCaseQuery = searchQuery.toLowerCase();
+        
+        if (thenBy) {
+             return structuredData.map(primaryGroup => {
+                const matchingCards = primaryGroup.groupCards.filter(card =>
+                    card.key.toLowerCase().includes(lowerCaseQuery)
+                );
+                if (matchingCards.length > 0) {
+                    return { ...primaryGroup, groupCards: matchingCards };
+                }
+                return null;
+            }).filter(Boolean);
+        } else {
+             return structuredData.filter(item => item.key.toLowerCase().includes(lowerCaseQuery));
+        }
+    }, [structuredData, searchQuery, thenBy]);
+};
+
+const useSortedData = (filteredData, sortBy, sortDirection, thenBy) => {
+    return useMemo(() => {
+        if (!sortBy || !filteredData) return filteredData;
+        
+        const sorted = _.orderBy(filteredData, [item => {
+            // For nested data, sort by the primary group key. For flat, sort by the item key.
+            return thenBy ? item.groupKey : item.key;
+        }], [sortDirection]);
+
+        if (thenBy) {
+            // If nested, also sort the cards within each group
+            sorted.forEach(group => {
+                group.groupCards = _.orderBy(group.groupCards, [sortBy], [sortDirection]);
+            });
+        }
+        
+        return sorted;
+    }, [filteredData, sortBy, sortDirection, thenBy]);
+};
+
+
+// --- Main Component ---
+
+const DataDashboard = ({ rawData }) => {
+    // State for user-controlled inputs
+    const [groupBy, setGroupBy] = useState('testResult');
+    const [thenBy, setThenBy] = useState(''); // Empty string means no secondary grouping
+    const [searchQuery, setSearchQuery] = useState('');
+    const [sortBy, setSortBy] = useState('count');
+    const [sortDirection, setSortDirection] = useState('desc');
+    const [isProcessing, setIsProcessing] = useState(true);
+    const [finalData, setFinalData] = useState([]);
+    const [page, setPage] = useState(1);
+    const rowsPerPage = 12;
+
+    // --- HOOK CHAIN ---
+    const groupedData = useGroupedData(rawData, groupBy, thenBy);
+    const filteredData = useFilteredData(groupedData, searchQuery, thenBy);
+    const sortedData = useSortedData(filteredData, sortBy, sortDirection, thenBy);
+
+    useEffect(() => {
+        setIsProcessing(true);
+    }, [rawData, groupBy, thenBy, searchQuery, sortBy, sortDirection]);
+    
+    useEffect(() => {
+        setFinalData(sortedData);
+        setIsProcessing(false);
+    }, [sortedData]);
+    
+    // --- Pagination Logic ---
+    const flatDataForPagination = useMemo(() => {
+        return thenBy ? finalData.flatMap(group => group.groupCards) : finalData;
+    }, [finalData, thenBy]);
+    
+    const pages = Math.ceil(flatDataForPagination.length / rowsPerPage);
+    const paginatedItems = useMemo(() => {
+        const start = (page - 1) * rowsPerPage;
+        return flatDataForPagination.slice(start, start + rowsPerPage);
+    }, [page, flatDataForPagination]);
+
+    if (isProcessing) {
+        return <div>Loading...</div>; // Or a spinner component
     }
-
-    // Step 2: Restructure data for the UI
-    if (thenBy) {
-      return Object.entries(grouped).map(([primaryKey, subGroups]) => {
-        const processedCards = Object.entries(subGroups).map(([secondaryKey, items]) => {
-          return processGroupData(secondaryKey, items, groupBy);
-        });
-        return {
-          groupKey: primaryKey,
-          groupCards: processedCards,
-        };
-      });
-    } else {
-      return Object.entries(grouped).map(([key, values]) =>
-        processGroupData(key, values, groupBy)
-      );
-    }
-  }, [data, groupBy, thenBy]);
-
-  return structuredData;
-};
-
-// hooks/useFilteredData.js
-import { useMemo } from 'react';
-
-export const useFilteredData = (structuredData, searchQuery, thenBy) => {
-  const filteredData = useMemo(() => {
-    if (!searchQuery) {
-      return structuredData;
-    }
-
-    const lowerCaseQuery = searchQuery.toLowerCase();
-
-    // The .filter(Boolean) at the end cleans out any null entries.
-    return structuredData.map(primaryGroup => {
-      // If not using 'thenBy', the structure is flat.
-      if (!thenBy) {
-        // 'primaryGroup' is a single card object here.
-        return primaryGroup.key.toLowerCase().includes(lowerCaseQuery)
-          ? primaryGroup
-          : null;
-      }
-
-      // Logic for nested structure
-      const primaryMatch = primaryGroup.groupKey.toLowerCase().includes(lowerCaseQuery);
-      if (primaryMatch) {
-        return primaryGroup; // If the main group matches, show all its cards
-      }
-
-      const matchingCards = primaryGroup.groupCards.filter(card =>
-        card.key.toLowerCase().includes(lowerCaseQuery)
-      );
-
-      if (matchingCards.length > 0) {
-        // If only sub-cards match, return the group with just those cards
-        return { ...primaryGroup, groupCards: matchingCards };
-      }
-
-      return null; // No match in this group
-    }).filter(Boolean);
-
-  }, [structuredData, searchQuery, thenBy]);
-
-  return filteredData;
-};
-
-// hooks/useSortedData.js
-import { useMemo } from 'react';
-import _ from 'lodash';
-
-export const useSortedData = (filteredData, sortBy, sortDirection) => {
-  const sortedData = useMemo(() => {
-    if (!sortBy) {
-      return filteredData;
-    }
-    return _.orderBy(filteredData, [sortBy], [sortDirection]);
-  }, [filteredData, sortBy, sortDirection]);
-
-  return sortedData;
-};
-
-
-// sample
-import { useState, useEffect } from 'react';
-import { useGroupedData } from './hooks/useGroupedData';
-import { useFilteredData } from './hooks/useFilteredData';
-import { useSortedData } from './hooks/useSortedData';
-
-// Your component function
-const Component = ({ data, groupBy, thenBy, searchQuery, sortBy, sortDirection }) => {
-  const [isProcessing, setIsProcessing] = useState(true);
-  const [processedData, setProcessedData] = useState([]);
-
-  // --- HOOK CHAIN ---
-  // Each hook feeds its result into the next.
-  const groupedData = useGroupedData(data, groupBy, thenBy);
-  const filteredData = useFilteredData(groupedData, searchQuery, thenBy);
-  const finalData = useSortedData(filteredData, sortBy, sortDirection);
-  
-  // This effect turns the loading indicator ON when inputs change.
-  useEffect(() => {
-    setIsProcessing(true);
-  }, [data, groupBy, thenBy, searchQuery, sortBy, sortDirection]);
-
-  // This effect updates the state with the final data and turns the loading indicator OFF.
-  useEffect(() => {
-    setProcessedData(finalData);
-    setIsProcessing(false);
-  }, [finalData]);
-
-  // UI using the state
-  return <ResultsDisplay processedData={processedData} isLoading={isProcessing} />;
-};
-
-
-// The ResultsDisplay component remains the same.
-const ResultsDisplay = ({ processedData, isLoading }) => {
-  if (isLoading) {
-    return <div>Processing...</div>;
-  }
-  if (!processedData || processedData.length === 0) {
-    return <div>No results found for your query.</div>;
-  }
-  // ... render results
-};
