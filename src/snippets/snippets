@@ -1,175 +1,152 @@
-// src/utils/dataProcessor.js
-// This file contains the pure data transformation logic, completely decoupled from React.
-
-
-const TEST_RESULT_FAIL = "Fail";
-const UNKNOWN_GROUP = "Unknown Group";
-const NOT_APPLICABLE = "N/A";
-
-const getChartValue = (datum, resultNumeric) => {
-  if (Array.isArray(datum)) {
-    if (datum.length > 2) return datum;
-    const numericValue = parseFloat(datum[0]?.value);
-    return !isNaN(numericValue) ? numericValue : parseFloat(resultNumeric);
-  }
-  const numericValue = parseFloat(datum);
-  return !isNaN(numericValue) ? numericValue : parseFloat(resultNumeric);
-};
-
-const createChartDataItem = (item, time, value) => {
-  const { parentRecordData, testRecordId, processIdentifier, serialNumber, testId, horizontalUnits } = item;
-  return {
-    value, time, testRecordId, processIdentifier, serialNumber,
-    stationId: `${parentRecordData?.testStation ?? ""}${parentRecordData?.testStationSerialNumber ?? ""}`,
-    ita: `${parentRecordData?.stationComponentName ?? ""} ${parentRecordData?.testStationSerialNumber ?? ""}`,
-    testProgramVersion: `Program Version ${parentRecordData?.version ?? "N/A"}`,
-    testId: testId ?? "Unknown ID",
-    horizontalUnits: horizontalUnits ?? "",
-  };
-};
-
-/**
- * Processes a single group of test data into a summary object.
- * @param {string} key - The identifier for the group.
- * @param {Array<object>} values - An array of test data items for the group.
- * @returns {object} A summary object for the group.
- */
-export const processGroupData = (key, values) => {
-  const summary = values.reduce((acc, item) => {
-    // Business rule: Any result not explicitly "Fail" is considered a pass.
-    if (item.testResult !== TEST_RESULT_FAIL) {
-      acc.passCount++;
-    } else {
-      acc.failCount++;
-    }
-
-    if (item.dutIdentifier) {
-      acc.uniqueIdentifiers.add(item.dutIdentifier[0]);
-    }
-
-    // `parseDate` is an assumed external utility that returns a Date object or null.
-    const stopTime = parseDate(item.parentRecordData?.stopTime);
-    if (stopTime instanceof Date && !isNaN(stopTime)) {
-      acc.timestamps.push(stopTime);
-      const chartValue = getChartValue(item.data, item.resultNumeric);
-      if (chartValue !== null && (!isNaN(parseFloat(chartValue)) || Array.isArray(chartValue))) {
-        acc.chartData.push(createChartDataItem(item, stopTime, chartValue));
-      }
-    }
-    
-    return acc;
-  }, {
-    passCount: 0,
-    failCount: 0,
-    uniqueIdentifiers: new Set(),
-    timestamps: [],
-    chartData: [],
-  });
-
-  const totalCount = values.length;
-  const passRate = totalCount ? (summary.passCount / totalCount) * 100 : 0;
-  const mostRecentDateRaw = summary.timestamps.length > 0
-    ? new Date(Math.max(...summary.timestamps))
-    : null;
-
-  return {
-    key: key ?? UNKNOWN_GROUP,
-    count: totalCount,
-    passRate: parseFloat(passRate.toFixed(1)),
-    passCount: summary.passCount,
-    failCount: summary.failCount,
-    uniqueIdentifiers: summary.uniqueIdentifiers.size,
-    mostRecentDate: mostRecentDateRaw
-      ? mostRecentDateRaw.toLocaleDateString(undefined, {
-          year: "numeric", month: "short", day: "numeric",
-        })
-      : NOT_APPLICABLE,
-    mostRecentDateRaw,
-    tests: values,
-    data: summary.chartData,
-  };
-};
-
-// src/hooks/useProcessedData.js
-// This custom hook memoizes the result of the data processing to prevent unnecessary re-renders.
-
+// hooks/useGroupedData.js
 import { useMemo } from 'react';
-import { processGroupData } from '../utils/dataProcessor';
+import _ from 'lodash';
 
-/**
- * A hook to process and memoize grouped test data for display.
- * @param {object} groupedData - Raw data, e.g., { "Group A": [...], "Group B": [...] }.
- * @returns {Array<object>} The memoized array of processed group summary objects.
- */
-export const useProcessedData = (groupedData) => {
-  const processedData = useMemo(() => {
-    if (!groupedData || Object.keys(groupedData).length === 0) {
+// This function can be kept separate or moved inside the hook if not used elsewhere.
+const processGroupData = (key, items, groupBy) => {
+  // Assuming 'processGroupData' exists and returns an object like { key, ...data }
+  // For this example, let's create a placeholder implementation:
+  return {
+    key: key,
+    count: items.length,
+    items: items,
+    // ... other aggregated data
+  };
+};
+
+export const useGroupedData = (data, groupBy, thenBy) => {
+  const structuredData = useMemo(() => {
+    if (!data.length || !groupBy) {
       return [];
     }
-    return Object.entries(groupedData).map(([key, values]) => {
-      return processGroupData(key, values);
-    });
-  }, [groupedData]);
 
-  return processedData;
+    // Step 1: Perform initial and secondary grouping
+    let grouped = _.groupBy(data, groupBy);
+    if (thenBy) {
+      grouped = _.mapValues(grouped, (items) => _.groupBy(items, thenBy));
+    }
+
+    // Step 2: Restructure data for the UI
+    if (thenBy) {
+      return Object.entries(grouped).map(([primaryKey, subGroups]) => {
+        const processedCards = Object.entries(subGroups).map(([secondaryKey, items]) => {
+          return processGroupData(secondaryKey, items, groupBy);
+        });
+        return {
+          groupKey: primaryKey,
+          groupCards: processedCards,
+        };
+      });
+    } else {
+      return Object.entries(grouped).map(([key, values]) =>
+        processGroupData(key, values, groupBy)
+      );
+    }
+  }, [data, groupBy, thenBy]);
+
+  return structuredData;
 };
 
-// src/components/DataDashboard.jsx
-// This file contains the React components, including PropTypes for type checking and documentation.
+// hooks/useFilteredData.js
+import { useMemo } from 'react';
+
+export const useFilteredData = (structuredData, searchQuery, thenBy) => {
+  const filteredData = useMemo(() => {
+    if (!searchQuery) {
+      return structuredData;
+    }
+
+    const lowerCaseQuery = searchQuery.toLowerCase();
+
+    // The .filter(Boolean) at the end cleans out any null entries.
+    return structuredData.map(primaryGroup => {
+      // If not using 'thenBy', the structure is flat.
+      if (!thenBy) {
+        // 'primaryGroup' is a single card object here.
+        return primaryGroup.key.toLowerCase().includes(lowerCaseQuery)
+          ? primaryGroup
+          : null;
+      }
+
+      // Logic for nested structure
+      const primaryMatch = primaryGroup.groupKey.toLowerCase().includes(lowerCaseQuery);
+      if (primaryMatch) {
+        return primaryGroup; // If the main group matches, show all its cards
+      }
+
+      const matchingCards = primaryGroup.groupCards.filter(card =>
+        card.key.toLowerCase().includes(lowerCaseQuery)
+      );
+
+      if (matchingCards.length > 0) {
+        // If only sub-cards match, return the group with just those cards
+        return { ...primaryGroup, groupCards: matchingCards };
+      }
+
+      return null; // No match in this group
+    }).filter(Boolean);
+
+  }, [structuredData, searchQuery, thenBy]);
+
+  return filteredData;
+};
+
+// hooks/useSortedData.js
+import { useMemo } from 'react';
+import _ from 'lodash';
+
+export const useSortedData = (filteredData, sortBy, sortDirection) => {
+  const sortedData = useMemo(() => {
+    if (!sortBy) {
+      return filteredData;
+    }
+    return _.orderBy(filteredData, [sortBy], [sortDirection]);
+  }, [filteredData, sortBy, sortDirection]);
+
+  return sortedData;
+};
 
 
-import React from 'react';
-import PropTypes from 'prop-types';
-import { useProcessedData } from '../hooks/useProcessedData';
+// sample
+import { useState, useEffect } from 'react';
+import { useGroupedData } from './hooks/useGroupedData';
+import { useFilteredData } from './hooks/useFilteredData';
+import { useSortedData } from './hooks/useSortedData';
 
-const processedGroupShape = PropTypes.shape({
-  key: PropTypes.string.isRequired,
-  count: PropTypes.number.isRequired,
-  passRate: PropTypes.number.isRequired,
-  uniqueIdentifiers: PropTypes.number.isRequired,
-  mostRecentDate: PropTypes.string.isRequired,
-  // Define other properties as needed for child components
-});
+// Your component function
+const Component = ({ data, groupBy, thenBy, searchQuery, sortBy, sortDirection }) => {
+  const [isProcessing, setIsProcessing] = useState(true);
+  const [processedData, setProcessedData] = useState([]);
 
-/**
- * A presentational component that renders a list of processed data groups.
- */
-const ProcessedDataDisplay = ({ data }) => {
-  if (!data || data.length === 0) {
-    return <p>No data to display.</p>;
+  // --- HOOK CHAIN ---
+  // Each hook feeds its result into the next.
+  const groupedData = useGroupedData(data, groupBy, thenBy);
+  const filteredData = useFilteredData(groupedData, searchQuery, thenBy);
+  const finalData = useSortedData(filteredData, sortBy, sortDirection);
+  
+  // This effect turns the loading indicator ON when inputs change.
+  useEffect(() => {
+    setIsProcessing(true);
+  }, [data, groupBy, thenBy, searchQuery, sortBy, sortDirection]);
+
+  // This effect updates the state with the final data and turns the loading indicator OFF.
+  useEffect(() => {
+    setProcessedData(finalData);
+    setIsProcessing(false);
+  }, [finalData]);
+
+  // UI using the state
+  return <ResultsDisplay processedData={processedData} isLoading={isProcessing} />;
+};
+
+
+// The ResultsDisplay component remains the same.
+const ResultsDisplay = ({ processedData, isLoading }) => {
+  if (isLoading) {
+    return <div>Processing...</div>;
   }
-
-  return (
-    <section>
-      <h2>Test Summary</h2>
-      {data.map((group) => (
-        <article key={group.key}>
-          <h3>{group.key}</h3>
-          <p><strong>Total Tests:</strong> {group.count}</p>
-          <p><strong>Pass Rate:</strong> {group.passRate}%</p>
-          <p><strong>Unique Devices:</strong> {group.uniqueIdentifiers}</p>
-          <p><strong>Most Recent Test:</strong> {group.mostRecentDate}</p>
-        </article>
-      ))}
-    </section>
-  );
+  if (!processedData || processedData.length === 0) {
+    return <div>No results found for your query.</div>;
+  }
+  // ... render results
 };
-
-ProcessedDataDisplay.propTypes = {
-  data: PropTypes.arrayOf(processedGroupShape).isRequired,
-};
-
-/**
- * A container component that uses the useProcessedData hook to process
- * raw data and pass it to a display component.
- */
-const DataDashboard = ({ rawGroupedData }) => {
-  const processedData = useProcessedData(rawGroupedData);
-  return <ProcessedDataDisplay data={processedData} />;
-};
-
-DataDashboard.propTypes = {
-  rawGroupedData: PropTypes.objectOf(PropTypes.array).isRequired,
-};
-
-export default DataDashboard;
